@@ -95,6 +95,11 @@ func (c *Cmd) Serve(ctx context.Context) error {
 	if c.o.sysProcAttr != nil {
 		c.cmd.SysProcAttr = c.o.sysProcAttr
 	}
+	if c.o.cancel != nil {
+		c.cmd.Cancel = func() error {
+			return c.o.cancel(c.cmd)
+		}
+	}
 	if err := c.cmd.Start(); err != nil {
 		c.m.Unlock()
 		Notify(ctx, StatusError)

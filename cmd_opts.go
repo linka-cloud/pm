@@ -17,6 +17,7 @@ package pm
 import (
 	"io"
 	"os"
+	"os/exec"
 	"syscall"
 )
 
@@ -28,6 +29,7 @@ type cmdOpts struct {
 	extraFiles  []*os.File
 	dir         string
 	sysProcAttr *syscall.SysProcAttr
+	cancel      func(cmd *exec.Cmd) error
 }
 
 type CmdOpt func(o *cmdOpts)
@@ -71,5 +73,11 @@ func WithExtraFiles(files ...*os.File) CmdOpt {
 func WithSysProcAttr(attr *syscall.SysProcAttr) CmdOpt {
 	return func(o *cmdOpts) {
 		o.sysProcAttr = attr
+	}
+}
+
+func WithCancel(cancel func(cmd *exec.Cmd) error) CmdOpt {
+	return func(o *cmdOpts) {
+		o.cancel = cancel
 	}
 }
