@@ -66,7 +66,7 @@ func (c *Cmd) Serve(ctx context.Context) error {
 	log := logger.C(ctx).Logger().WithField("service", c.String())
 	Notify(ctx, StatusStarting)
 	if c.reexec {
-		c.cmd = reexec.Command(append([]string{c.name}, c.args...)...)
+		c.cmd = reexec.CommandContext(ctx, append([]string{c.name}, c.args...)...)
 	} else {
 		c.cmd = exec.CommandContext(ctx, c.bin, c.args...)
 	}
@@ -74,12 +74,12 @@ func (c *Cmd) Serve(ctx context.Context) error {
 		c.cmd.Stdin = c.o.stdin
 	}
 	if c.o.stdout == nil {
-		c.cmd.Stdout = log.WriterLevel(logger.InfoLevel)
+		c.cmd.Stdout = os.Stdout
 	} else {
 		c.cmd.Stdout = c.o.stdout
 	}
 	if c.o.stderr == nil {
-		c.cmd.Stderr = log.WriterLevel(logger.ErrorLevel)
+		c.cmd.Stderr = os.Stderr
 	} else {
 		c.cmd.Stderr = c.o.stderr
 	}
