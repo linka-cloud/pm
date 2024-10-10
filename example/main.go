@@ -25,7 +25,14 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"go.linka.cloud/pm"
+	"go.linka.cloud/pm/reexec"
 )
+
+func init() {
+	if reexec.Init() {
+		return
+	}
+}
 
 func main() {
 	ctx, cancel := context.WithCancel(signals.SetupSignalHandler())
@@ -78,7 +85,7 @@ func run(ctx context.Context) error {
 	if err := m.Add(stopping); err != nil {
 		return err
 	}
-	echoDate := pm.NewCmd("echo date", "sh", "-c", `while true; do echo "date: $(date)"; sleep 1; done`)
+	echoDate := pm.Command("echo date", "sh", "-c", `while true; do echo "date: $(date)"; sleep 1; done`)
 	if err := m.Add(echoDate); err != nil {
 		return err
 	}

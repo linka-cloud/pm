@@ -61,7 +61,13 @@ func New(ctx context.Context, name string) Manager {
 						m.setStatus(e.SupervisorName, StatusError)
 					}
 				case suture.EventServicePanic:
-					logger.C(ctx).WithFields("service", e.SupervisorName, "status", StatusError).Warnf("%v", e)
+					logger.C(ctx).WithFields(
+						"service", e.SupervisorName,
+						"status", StatusError,
+						"error", e.PanicMsg,
+						"stacktrace", e.Stacktrace,
+						"restarting", e.Restarting,
+					).Warn("panic")
 					m.setStatus(e.SupervisorName, StatusError)
 				case suture.EventStopTimeout:
 					m.setStatus(e.SupervisorName, StatusUnknown)

@@ -16,24 +16,36 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
+	"sync"
 
 	"go.linka.cloud/grpc-toolkit/logger"
+
+	"go.linka.cloud/pm/reexec"
 )
+
+var ErrAlreadyRunning = errors.New("already running")
 
 var _ Service = (*Cmd)(nil)
 
 type Cmd struct {
-	name string
-	bin  string
-	args []string
-	cmd  *exec.Cmd
-	o    cmdOpts
+	name   string
+	bin    string
+	args   []string
+	cmd    *exec.Cmd
+	o      cmdOpts
+	reexec bool
+	m      sync.RWMutex
 }
 
-func NewCmd(name, bin string, args ...string) *Cmd {
+func Command(name, bin string, args ...string) *Cmd {
 	return &Cmd{name: name, bin: bin, args: args}
+}
+
+func ReExec(name string, args ...string) *Cmd {
+	return &Cmd{name: name, args: args, reexec: true}
 }
 
 func (c *Cmd) WithOpts(opts ...CmdOpt) *Cmd {
@@ -44,9 +56,20 @@ func (c *Cmd) WithOpts(opts ...CmdOpt) *Cmd {
 }
 
 func (c *Cmd) Serve(ctx context.Context) error {
+	c.m.RLock()
+	if c.cmd != nil {
+		c.m.RUnlock()
+		return ErrAlreadyRunning
+	}
+	c.m.RUnlock()
+	c.m.Lock()
 	log := logger.C(ctx).Logger().WithField("service", c.String())
 	Notify(ctx, StatusStarting)
-	c.cmd = exec.CommandContext(ctx, c.bin, c.args...)
+	if c.reexec {
+		c.cmd = reexec.Command(c.args...)
+	} else {
+		c.cmd = exec.CommandContext(ctx, c.bin, c.args...)
+	}
 	if c.o.stdin != nil {
 		c.cmd.Stdin = c.o.stdin
 	}
@@ -63,10 +86,26 @@ func (c *Cmd) Serve(ctx context.Context) error {
 	if c.o.env != nil {
 		c.cmd.Env = c.o.env
 	}
+	if len(c.o.extraFiles) != 0 {
+		c.cmd.ExtraFiles = c.o.extraFiles
+	}
+	if c.o.dir != "" {
+		c.cmd.Dir = c.o.dir
+	}
+	if c.o.sysProcAttr != nil {
+		c.cmd.SysProcAttr = c.o.sysProcAttr
+	}
 	if err := c.cmd.Start(); err != nil {
+		c.m.Unlock()
 		Notify(ctx, StatusError)
 		return err
 	}
+	c.m.Unlock()
+	defer func() {
+		c.m.Lock()
+		c.cmd = nil
+		c.m.Unlock()
+	}()
 	Notify(ctx, StatusRunning)
 	if err := c.cmd.Wait(); err != nil {
 		log.WithError(err).Error("exited")
@@ -78,7 +117,21 @@ func (c *Cmd) Serve(ctx context.Context) error {
 }
 
 func (c *Cmd) Signal(sig os.Signal) error {
+	c.m.Lock()
+	defer c.m.Unlock()
+	if c.cmd.Process == nil {
+		return nil
+	}
 	return c.cmd.Process.Signal(sig)
+}
+
+func (c *Cmd) Pid() int {
+	c.m.RLocker()
+	defer c.m.RUnlock()
+	if c.cmd.Process == nil {
+		return 0
+	}
+	return c.cmd.Process.Pid
 }
 
 func (c *Cmd) String() string {

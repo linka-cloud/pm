@@ -16,13 +16,18 @@ package pm
 
 import (
 	"io"
+	"os"
+	"syscall"
 )
 
 type cmdOpts struct {
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
-	env    []string
+	stdin       io.Reader
+	stdout      io.Writer
+	stderr      io.Writer
+	env         []string
+	extraFiles  []*os.File
+	dir         string
+	sysProcAttr *syscall.SysProcAttr
 }
 
 type CmdOpt func(o *cmdOpts)
@@ -48,5 +53,23 @@ func WithStderr(w io.Writer) CmdOpt {
 func WithEnv(env []string) CmdOpt {
 	return func(o *cmdOpts) {
 		o.env = env
+	}
+}
+
+func WithDir(dir string) CmdOpt {
+	return func(o *cmdOpts) {
+		o.dir = dir
+	}
+}
+
+func WithExtraFiles(files []*os.File) CmdOpt {
+	return func(o *cmdOpts) {
+		o.extraFiles = files
+	}
+}
+
+func WithSysProcAttr(attr *syscall.SysProcAttr) CmdOpt {
+	return func(o *cmdOpts) {
+		o.sysProcAttr = attr
 	}
 }
