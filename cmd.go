@@ -66,7 +66,7 @@ func (c *Cmd) Serve(ctx context.Context) error {
 	log := logger.C(ctx).Logger().WithField("service", c.String())
 	Notify(ctx, StatusStarting)
 	if c.reexec {
-		c.cmd = reexec.Command(c.args...)
+		c.cmd = reexec.Command(append([]string{c.name}, c.args...)...)
 	} else {
 		c.cmd = exec.CommandContext(ctx, c.bin, c.args...)
 	}
