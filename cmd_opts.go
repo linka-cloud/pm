@@ -62,7 +62,7 @@ func WithDir(dir string) CmdOpt {
 	}
 }
 
-func WithExtraFiles(files []*os.File) CmdOpt {
+func WithExtraFiles(files ...*os.File) CmdOpt {
 	return func(o *cmdOpts) {
 		o.extraFiles = files
 	}
