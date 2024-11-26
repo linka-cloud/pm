@@ -28,7 +28,7 @@ import (
 
 type Manager interface {
 	Add(s Service) error
-	Stop(s Service) error
+	Stop(s NamedService) error
 	Run(ctx context.Context) error
 	Status(...string) map[string]Status
 	Watch(ctx context.Context, fn func(map[string]Status))
@@ -101,7 +101,7 @@ func (m *manager) Add(s Service) error {
 	return nil
 }
 
-func (m *manager) Stop(s Service) error {
+func (m *manager) Stop(s NamedService) error {
 	m.m.Lock()
 	defer m.m.Unlock()
 	p, ok := m.procs[s.String()]

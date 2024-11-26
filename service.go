@@ -42,5 +42,15 @@ func (s *serviceFunc) String() string {
 
 type Service interface {
 	suture.Service
+	NamedService
+}
+
+type NamedService interface {
 	fmt.Stringer
+}
+
+type ServiceName string
+
+func (s ServiceName) String() string {
+	return string(s)
 }
