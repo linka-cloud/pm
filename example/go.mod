@@ -7,7 +7,6 @@ replace go.linka.cloud/pm => ../
 require (
 	go.linka.cloud/grpc-toolkit v0.4.4-0.20231026145832-5d6b16a2c2a0
 	go.linka.cloud/pm v0.0.0-20240816134212-b7165b190c69
-	golang.org/x/sync v0.9.0
 )
 
 require (
@@ -16,5 +15,8 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/thejerf/suture/v4 v4.0.5 // indirect
 	go.linka.cloud/pubsub v0.0.0-20220728154114-8213058139f3 // indirect
+	go.uber.org/atomic v1.7.0 // indirect
+	go.uber.org/multierr v1.7.0 // indirect
+	golang.org/x/sync v0.9.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 )

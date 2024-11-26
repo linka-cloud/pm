@@ -22,7 +22,6 @@ import (
 
 	"go.linka.cloud/grpc-toolkit/logger"
 	"go.linka.cloud/grpc-toolkit/signals"
-	"golang.org/x/sync/errgroup"
 
 	"go.linka.cloud/pm"
 	"go.linka.cloud/pm/reexec"
@@ -45,8 +44,6 @@ func main() {
 func run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	g, ctx := errgroup.WithContext(ctx)
 
 	m := pm.New(ctx, "main")
 
@@ -89,14 +86,14 @@ func run(ctx context.Context) error {
 	if err := m.Add(echoDate); err != nil {
 		return err
 	}
-	if err := m.Add(pm.NewServiceFunc("failing", func(ctx context.Context) error {
+	if err := m.AddFunc("failing", func(ctx context.Context) error {
 		pm.Notify(ctx, pm.StatusStarting)
 		time.Sleep(time.Second)
 		logger.C(ctx).Infof("failing in 1 second")
 		pm.Notify(ctx, pm.StatusRunning)
 		time.Sleep(time.Second)
 		return fmt.Errorf("failed")
-	})); err != nil {
+	}); err != nil {
 		return err
 	}
 	p := pm.NewServiceFunc("panicking", func(ctx context.Context) error {
@@ -110,7 +107,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	g.Go(func() error {
+	if err := m.AddFunc("monitor", func(ctx context.Context) error {
 		tk := time.NewTicker(10 * time.Second)
 		defer tk.Stop()
 		for {
@@ -131,10 +128,9 @@ func run(ctx context.Context) error {
 				return ctx.Err()
 			}
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
-	g.Go(func() error {
-		return m.Run(ctx)
-	})
-	return g.Wait()
+	return m.Run(ctx)
 }

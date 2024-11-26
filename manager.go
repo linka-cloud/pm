@@ -24,6 +24,7 @@ import (
 	"github.com/thejerf/suture/v4"
 	"go.linka.cloud/grpc-toolkit/logger"
 	pubsub "go.linka.cloud/pubsub/typed"
+	"go.uber.org/multierr"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -34,6 +35,7 @@ var (
 
 type Manager interface {
 	Add(s Service) error
+	AddFunc(name string, f ServiceFunc) error
 	Stop(s NamedService) error
 	Run(ctx context.Context) error
 	Status(...string) map[string]Status
@@ -107,6 +109,10 @@ func (m *manager) Add(s Service) error {
 	return nil
 }
 
+func (m *manager) AddFunc(name string, f ServiceFunc) error {
+	return m.Add(NewServiceFunc(name, f))
+}
+
 func (m *manager) Stop(s NamedService) error {
 	m.m.Lock()
 	defer m.m.Unlock()
@@ -158,7 +164,14 @@ func (m *manager) Close() error {
 			return m.s.Remove(v.tk)
 		})
 	}
-	return g.Wait()
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	var err error
+	for _, v := range m.procs {
+		err = multierr.Append(err, m.s.Remove(v.tk))
+	}
+	return err
 }
 
 func (m *manager) newProcess(name string, s Service) *process {
