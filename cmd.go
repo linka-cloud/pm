@@ -16,7 +16,6 @@ package pm
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"sync"
@@ -25,8 +24,6 @@ import (
 
 	"go.linka.cloud/pm/reexec"
 )
-
-var ErrAlreadyRunning = errors.New("already running")
 
 var _ Service = (*Cmd)(nil)
 

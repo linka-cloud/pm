@@ -16,6 +16,7 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -24,6 +25,11 @@ import (
 	"go.linka.cloud/grpc-toolkit/logger"
 	pubsub "go.linka.cloud/pubsub/typed"
 	"golang.org/x/sync/errgroup"
+)
+
+var (
+	ErrAlreadyRunning = errors.New("already running")
+	ErrNotExist       = errors.New("service does not exist")
 )
 
 type Manager interface {
@@ -91,7 +97,7 @@ func (m *manager) Add(s Service) error {
 	v, ok := m.procs[s.String()]
 	if ok {
 		if v.status.Load() == uint32(StatusRunning) {
-			return fmt.Errorf("service %s already exists and running", s.String())
+			return fmt.Errorf("%s: %w", s.String(), ErrAlreadyRunning)
 		}
 		if err := m.s.Remove(v.tk); err != nil {
 			return err
@@ -106,7 +112,7 @@ func (m *manager) Stop(s NamedService) error {
 	defer m.m.Unlock()
 	p, ok := m.procs[s.String()]
 	if !ok {
-		return fmt.Errorf("service %s does not exist", s.String())
+		return fmt.Errorf("%s: %w", s.String(), ErrNotExist)
 	}
 	return m.s.Remove(p.tk)
 }
