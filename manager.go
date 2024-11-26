@@ -23,6 +23,7 @@ import (
 	"github.com/thejerf/suture/v4"
 	"go.linka.cloud/grpc-toolkit/logger"
 	pubsub "go.linka.cloud/pubsub/typed"
+	"golang.org/x/sync/errgroup"
 )
 
 type Manager interface {
@@ -31,6 +32,7 @@ type Manager interface {
 	Run(ctx context.Context) error
 	Status(...string) map[string]Status
 	Watch(ctx context.Context, fn func(map[string]Status))
+	Close() error
 }
 
 type manager struct {
@@ -67,7 +69,7 @@ func New(ctx context.Context, name string) Manager {
 						"error", e.PanicMsg,
 						"stacktrace", e.Stacktrace,
 						"restarting", e.Restarting,
-					).Warn("panic")
+					).Error("panic")
 					m.setStatus(e.SupervisorName, StatusError)
 				case suture.EventStopTimeout:
 					m.setStatus(e.SupervisorName, StatusUnknown)
@@ -140,6 +142,17 @@ func (m *manager) Watch(ctx context.Context, fn func(map[string]Status)) {
 			}
 		}
 	}()
+}
+
+func (m *manager) Close() error {
+	g := errgroup.Group{}
+	for _, v := range m.procs {
+		v := v
+		g.Go(func() error {
+			return m.s.Remove(v.tk)
+		})
+	}
+	return g.Wait()
 }
 
 func (m *manager) newProcess(name string, s Service) *process {
