@@ -45,62 +45,89 @@ type Manager interface {
 }
 
 type manager struct {
-	m     sync.Mutex
-	procs map[string]*process
-	s     *suture.Supervisor
-	pub   pubsub.Publisher[map[string]Status]
+	name    string
+	ctx     context.Context
+	m       sync.Mutex
+	rctx    context.Context
+	rcancel context.CancelFunc
+	g       *errgroup.Group
+	procs   map[string]*process
+	pm      sync.Mutex
+	s       *suture.Supervisor
+	pub     pubsub.Publisher[map[string]Status]
 }
 
 func New(ctx context.Context, name string) Manager {
-	var m *manager
-	m = &manager{
+	return (&manager{
+		name:  name,
+		ctx:   ctx,
 		procs: make(map[string]*process),
 		pub:   pubsub.NewPublisher[map[string]Status](time.Second, 1),
-		s: suture.New(name, suture.Spec{
-			FailureBackoff: 5 * time.Second,
-			EventHook: func(event suture.Event) {
-				switch e := event.(type) {
-				case suture.EventResume:
-					m.setStatus(e.SupervisorName, StatusRunning)
-				case suture.EventBackoff:
-					logger.C(ctx).WithFields("service", e.SupervisorName, "status", StatusCrashLoop).Warnf("%v", e)
-					m.setStatus(e.SupervisorName, StatusCrashLoop)
-				case suture.EventServiceTerminate:
-					if e.Err == nil {
-						m.setStatus(e.SupervisorName, StatusStopped)
-					} else {
-						m.setStatus(e.SupervisorName, StatusError)
-					}
-				case suture.EventServicePanic:
-					logger.C(ctx).WithFields(
-						"service", e.SupervisorName,
-						"status", StatusError,
-						"error", e.PanicMsg,
-						"stacktrace", e.Stacktrace,
-						"restarting", e.Restarting,
-					).Error("panic")
+	}).setupSupervisor()
+}
+
+func (m *manager) setupSupervisor() *manager {
+	m.s = suture.New(m.name, suture.Spec{
+		FailureBackoff: 5 * time.Second,
+		EventHook: func(event suture.Event) {
+			switch e := event.(type) {
+			case suture.EventResume:
+				m.setStatus(e.SupervisorName, StatusRunning)
+			case suture.EventBackoff:
+				logger.C(m.ctx).WithFields("service", e.SupervisorName, "status", StatusCrashLoop).Warnf("%v", e)
+				m.setStatus(e.SupervisorName, StatusCrashLoop)
+			case suture.EventServiceTerminate:
+				if e.Err == nil {
+					m.setStatus(e.SupervisorName, StatusStopped)
+				} else {
 					m.setStatus(e.SupervisorName, StatusError)
-				case suture.EventStopTimeout:
-					m.setStatus(e.SupervisorName, StatusUnknown)
 				}
-			},
-		}),
-	}
+			case suture.EventServicePanic:
+				logger.C(m.ctx).WithFields(
+					"service", e.SupervisorName,
+					"status", StatusError,
+					"error", e.PanicMsg,
+					"stacktrace", e.Stacktrace,
+					"restarting", e.Restarting,
+				).Error("panic")
+				m.setStatus(e.SupervisorName, StatusError)
+			case suture.EventStopTimeout:
+				m.setStatus(e.SupervisorName, StatusUnknown)
+			}
+		},
+	})
 	return m
 }
 
 func (m *manager) Run(ctx context.Context) error {
-	return m.s.Serve(ctx)
+	m.m.Lock()
+	if m.rcancel != nil {
+		m.m.Unlock()
+		return ErrAlreadyRunning
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	g, ctx := errgroup.WithContext(ctx)
+	m.rctx, m.rcancel, m.g = ctx, cancel, g
+	m.m.Unlock()
+	g.Go(func() error {
+		return m.s.Serve(ctx)
+	})
+	return g.Wait()
 }
 
 func (m *manager) RunBackground(ctx context.Context) <-chan error {
-	return m.s.ServeBackground(ctx)
+	errs := make(chan error, 1)
+	go func() {
+		errs <- m.Run(ctx)
+		close(errs)
+	}()
+	return errs
 }
 
 func (m *manager) Add(s Service) error {
 	s = &wrapper{s: s, m: m}
-	m.m.Lock()
-	defer m.m.Unlock()
+	m.pm.Lock()
+	defer m.pm.Unlock()
 	v, ok := m.procs[s.String()]
 	if ok {
 		if v.status.Load() == uint32(StatusRunning) {
@@ -119,8 +146,8 @@ func (m *manager) AddFunc(name string, f ServiceFunc) error {
 }
 
 func (m *manager) Stop(s NamedService) error {
-	m.m.Lock()
-	defer m.m.Unlock()
+	m.pm.Lock()
+	defer m.pm.Unlock()
 	p, ok := m.procs[s.String()]
 	if !ok {
 		return fmt.Errorf("%s: %w", s.String(), ErrNotExist)
@@ -129,8 +156,8 @@ func (m *manager) Stop(s NamedService) error {
 }
 
 func (m *manager) Status(ss ...string) map[string]Status {
-	m.m.Lock()
-	defer m.m.Unlock()
+	m.pm.Lock()
+	defer m.pm.Unlock()
 	status := make(map[string]Status, len(m.procs))
 	if len(ss) == 0 {
 		for k, v := range m.procs {
@@ -162,6 +189,18 @@ func (m *manager) Watch(ctx context.Context, fn func(map[string]Status)) {
 }
 
 func (m *manager) Close() error {
+	m.m.Lock()
+	defer m.m.Unlock()
+	if m.rcancel == nil {
+		return nil
+	}
+	m.rcancel()
+	defer func() {
+		m.rctx, m.rcancel, m.g = nil, nil, nil
+	}()
+	if err := m.g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
 	g := errgroup.Group{}
 	for _, v := range m.procs {
 		v := v
@@ -173,9 +212,15 @@ func (m *manager) Close() error {
 		return err
 	}
 	var err error
+	m.pm.Lock()
+	defer m.pm.Unlock()
 	for _, v := range m.procs {
 		err = multierr.Append(err, m.s.Remove(v.tk))
 	}
+	// clean up
+	m.procs = make(map[string]*process)
+	// we need to re-setup the supervisor to prevent its liveness channel from being double closed
+	m.setupSupervisor()
 	return err
 }
 
@@ -206,7 +251,7 @@ func (m *manager) doSetStatus(name string, status Status) {
 }
 
 func (m *manager) setStatus(name string, status Status) {
-	m.m.Lock()
-	defer m.m.Unlock()
+	m.pm.Lock()
+	defer m.pm.Unlock()
 	m.doSetStatus(name, status)
 }
