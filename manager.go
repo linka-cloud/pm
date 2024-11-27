@@ -38,6 +38,7 @@ type Manager interface {
 	AddFunc(name string, f ServiceFunc) error
 	Stop(s NamedService) error
 	Run(ctx context.Context) error
+	RunBackground(ctx context.Context) <-chan error
 	Status(...string) map[string]Status
 	Watch(ctx context.Context, fn func(map[string]Status))
 	Close() error
@@ -90,6 +91,10 @@ func New(ctx context.Context, name string) Manager {
 
 func (m *manager) Run(ctx context.Context) error {
 	return m.s.Serve(ctx)
+}
+
+func (m *manager) RunBackground(ctx context.Context) <-chan error {
+	return m.s.ServeBackground(ctx)
 }
 
 func (m *manager) Add(s Service) error {
