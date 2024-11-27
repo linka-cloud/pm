@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"go.linka.cloud/grpc-toolkit/logger"
 )
@@ -22,7 +23,7 @@ func (w *wrapper) Serve(ctx context.Context) error {
 		w.m.setStatus(w.s.String(), s)
 	})
 	defer clean()
-	if err := w.s.Serve(logger.Set(ctx, logger.C(ctx).WithFields("service", w.s.String()))); err != nil && !errors.Is(err, context.Canceled) {
+	if err := w.s.Serve(logger.Set(ctx, logger.C(ctx).WithFields("service", fmt.Sprintf("%s.%s", w.m.s.Name, w.s.String())))); err != nil && !errors.Is(err, context.Canceled) {
 		w.m.setStatus(w.s.String(), StatusError)
 		return err
 	}
