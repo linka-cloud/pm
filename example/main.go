@@ -47,15 +47,8 @@ func run(ctx context.Context) error {
 
 	m := pm.New(ctx, "main")
 
-	ss := make(map[string]pm.Status)
-	m.Watch(context.Background(), func(m map[string]pm.Status) {
-		for k, v := range m {
-			if s, ok := ss[k]; ok && s == v {
-				continue
-			}
-			ss[k] = v
-			logger.C(ctx).WithFields("service", k, "status", v).Info("status changed")
-		}
+	m.WatchChanges(context.Background(), func(n string, s pm.Status) {
+		logger.C(ctx).WithFields("service", n, "status", s).Info("status changed")
 	})
 
 	stopping := pm.NewServiceFunc("stopping", func(ctx context.Context) error {

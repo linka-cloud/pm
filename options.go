@@ -15,26 +15,42 @@
 package pm
 
 import (
-	"sync/atomic"
-
-	"github.com/thejerf/suture/v4"
+	"time"
 )
 
-type process struct {
-	sup    *suture.Supervisor
-	tk     suture.ServiceToken
-	status atomic.Uint32
-	s      *wrapper
+type Option func(o *options)
+
+func WithFailureDecay(f float64) Option {
+	return func(o *options) {
+		o.failureDecay = f
+	}
 }
 
-func (p *process) Name() string {
-	return p.sup.Name
+func WithFailureThreshold(f float64) Option {
+	return func(o *options) {
+		o.failureThreshold = f
+	}
 }
 
-func (p *process) Status() Status {
-	return Status(p.status.Load())
+func WithFailureBackoff(d time.Duration) Option {
+	return func(o *options) {
+		o.failureBackoff = d
+	}
 }
 
-func (p *process) setStatus(status Status) {
-	p.status.Store(uint32(status))
+func WithPassThroughPanics() Option {
+	return func(o *options) {
+		o.passThroughPanics = true
+	}
+}
+
+type options struct {
+	failureDecay      float64
+	failureThreshold  float64
+	failureBackoff    time.Duration
+	passThroughPanics bool
+}
+
+var defaultOptions = options{
+	failureBackoff: 5 * time.Second,
 }

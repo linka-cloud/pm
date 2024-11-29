@@ -14,27 +14,25 @@
 
 package pm
 
-import (
-	"sync/atomic"
+type ServiceOption func(o *svcOpts)
 
-	"github.com/thejerf/suture/v4"
-)
-
-type process struct {
-	sup    *suture.Supervisor
-	tk     suture.ServiceToken
-	status atomic.Uint32
-	s      *wrapper
+func WithoutLogger() ServiceOption {
+	return func(o *svcOpts) {
+		o.noLogger = true
+	}
 }
 
-func (p *process) Name() string {
-	return p.sup.Name
+func WithLoggerKey(key string) ServiceOption {
+	return func(o *svcOpts) {
+		o.logKey = key
+	}
 }
 
-func (p *process) Status() Status {
-	return Status(p.status.Load())
+type svcOpts struct {
+	noLogger bool
+	logKey   string
 }
 
-func (p *process) setStatus(status Status) {
-	p.status.Store(uint32(status))
+var defaultSvcOpts = svcOpts{
+	logKey: "service",
 }

@@ -34,18 +34,20 @@ var (
 )
 
 type Manager interface {
-	Add(s Service) error
-	AddFunc(name string, f ServiceFunc) error
+	Add(s Service, opts ...ServiceOption) error
+	AddFunc(name string, f ServiceFunc, opts ...ServiceOption) error
 	Stop(s NamedService) error
 	Run(ctx context.Context) error
 	RunBackground(ctx context.Context) <-chan error
 	Status(...string) map[string]Status
 	Watch(ctx context.Context, fn func(map[string]Status))
+	WatchChanges(ctx context.Context, fn func(string, Status))
 	Close() error
 }
 
 type manager struct {
 	name    string
+	opts    options
 	ctx     context.Context
 	m       sync.Mutex
 	rctx    context.Context
@@ -57,9 +59,14 @@ type manager struct {
 	pub     pubsub.Publisher[map[string]Status]
 }
 
-func New(ctx context.Context, name string) Manager {
+func New(ctx context.Context, name string, opts ...Option) Manager {
+	o := defaultOptions
+	for _, v := range opts {
+		v(&o)
+	}
 	return (&manager{
 		name:  name,
+		opts:  o,
 		ctx:   ctx,
 		procs: make(map[string]*process),
 		pub:   pubsub.NewPublisher[map[string]Status](time.Second, 1),
@@ -67,14 +74,26 @@ func New(ctx context.Context, name string) Manager {
 }
 
 func (m *manager) setupSupervisor() *manager {
+	log := func(name string) logger.Logger {
+		m.pm.Lock()
+		defer m.pm.Unlock()
+		p, ok := m.procs[name]
+		if !ok {
+			return logger.C(m.ctx)
+		}
+		return p.s.setupLogger(m.ctx)
+	}
 	m.s = suture.New(m.name, suture.Spec{
-		FailureBackoff: 5 * time.Second,
+		FailureDecay:      m.opts.failureDecay,
+		FailureThreshold:  m.opts.failureThreshold,
+		FailureBackoff:    m.opts.failureBackoff,
+		PassThroughPanics: m.opts.passThroughPanics,
 		EventHook: func(event suture.Event) {
 			switch e := event.(type) {
 			case suture.EventResume:
 				m.setStatus(e.SupervisorName, StatusRunning)
 			case suture.EventBackoff:
-				logger.C(m.ctx).WithFields("service", e.SupervisorName, "status", StatusCrashLoop).Warnf("%v", e)
+				log(e.SupervisorName).WithFields("status", StatusCrashLoop).Warnf("%v", e)
 				m.setStatus(e.SupervisorName, StatusCrashLoop)
 			case suture.EventServiceTerminate:
 				if e.Err == nil {
@@ -83,8 +102,7 @@ func (m *manager) setupSupervisor() *manager {
 					m.setStatus(e.SupervisorName, StatusError)
 				}
 			case suture.EventServicePanic:
-				logger.C(m.ctx).WithFields(
-					"service", e.SupervisorName,
+				log(e.SupervisorName).WithFields(
 					"status", StatusError,
 					"error", e.PanicMsg,
 					"stacktrace", e.Stacktrace,
@@ -124,25 +142,28 @@ func (m *manager) RunBackground(ctx context.Context) <-chan error {
 	return errs
 }
 
-func (m *manager) Add(s Service) error {
-	s = &wrapper{s: s, m: m}
+func (m *manager) Add(s Service, opts ...ServiceOption) error {
+	w := &wrapper{s: s, m: m, opts: defaultSvcOpts}
+	for _, v := range opts {
+		v(&w.opts)
+	}
 	m.pm.Lock()
 	defer m.pm.Unlock()
-	v, ok := m.procs[s.String()]
+	v, ok := m.procs[w.String()]
 	if ok {
 		if v.status.Load() == uint32(StatusRunning) {
-			return fmt.Errorf("%s: %w", s.String(), ErrAlreadyRunning)
+			return fmt.Errorf("%s: %w", w.String(), ErrAlreadyRunning)
 		}
 		if err := m.s.Remove(v.tk); err != nil {
 			return err
 		}
 	}
-	m.procs[s.String()] = m.newProcess(s.String(), s)
+	m.procs[w.String()] = m.newProcess(w.String(), w)
 	return nil
 }
 
-func (m *manager) AddFunc(name string, f ServiceFunc) error {
-	return m.Add(NewServiceFunc(name, f))
+func (m *manager) AddFunc(name string, f ServiceFunc, opts ...ServiceOption) error {
+	return m.Add(NewServiceFunc(name, f), opts...)
 }
 
 func (m *manager) Stop(s NamedService) error {
@@ -188,6 +209,19 @@ func (m *manager) Watch(ctx context.Context, fn func(map[string]Status)) {
 	}()
 }
 
+func (m *manager) WatchChanges(ctx context.Context, fn func(string, Status)) {
+	ss := make(map[string]Status)
+	m.Watch(ctx, func(m map[string]Status) {
+		for k, v := range m {
+			if s, ok := ss[k]; ok && s == v {
+				continue
+			}
+			ss[k] = v
+			fn(k, v)
+		}
+	})
+}
+
 func (m *manager) Close() error {
 	m.m.Lock()
 	defer m.m.Unlock()
@@ -224,9 +258,10 @@ func (m *manager) Close() error {
 	return err
 }
 
-func (m *manager) newProcess(name string, s Service) *process {
+func (m *manager) newProcess(name string, s *wrapper) *process {
 	p := &process{
 		sup: suture.NewSimple(name),
+		s:   s,
 	}
 	p.sup.Add(s)
 	p.tk = m.s.Add(p.sup)
